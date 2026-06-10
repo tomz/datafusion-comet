@@ -210,6 +210,11 @@ impl From<CometError> for DataFusionError {
     fn from(value: CometError) -> Self {
         match value {
             CometError::DataFusion { msg: _, source } => source,
+            // Preserve the original Java throwable (e.g. a SparkRuntimeException raised by Spark's
+            // own codegen inside the JVM UDF kernel) as an `External` error so it survives the trip
+            // back through DataFusion and can be re-thrown with its exact type at the JNI boundary.
+            // Flattening it to a string here would surface it as a generic CometNativeException.
+            value @ CometError::JavaException { .. } => DataFusionError::External(Box::new(value)),
             _ => DataFusionError::Execution(value.to_string()),
         }
     }
@@ -492,7 +497,15 @@ fn throw_exception(env: &mut Env, error: &CometError, backtrace: Option<String>)
                 msg: _,
                 source: DataFusionError::External(e),
             } => {
-                if let Some(spark_error_with_ctx) = e.downcast_ref::<SparkErrorWithContext>() {
+                if let Some(CometError::JavaException { throwable, .. }) =
+                    e.downcast_ref::<CometError>()
+                {
+                    // A Java exception captured inside a JVM UDF kernel (e.g. Spark codegen
+                    // raising INVALID_REGEXP_REPLACE). Re-throw the original throwable so callers
+                    // see the exact Spark exception type rather than a wrapped CometNativeException.
+                    env.throw(throwable)
+                } else if let Some(spark_error_with_ctx) = e.downcast_ref::<SparkErrorWithContext>()
+                {
                     let json_message = spark_error_with_ctx.to_json();
                     env.throw_new(
                         jni::jni_str!("org/apache/comet/exceptions/CometQueryExecutionException"),
@@ -718,7 +731,8 @@ mod tests {
         init();
 
         INIT.call_once(|| {
-            // Add common classes to the classpath in so that we can find CometException
+            // Add comet-common classes to the classpath so we can find the Comet exception
+            // classes (CometNativeException, CometQueryExecutionException, etc.).
             let mut common_classes = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             common_classes.push("../../common/target/classes");
             let mut class_path = common_classes

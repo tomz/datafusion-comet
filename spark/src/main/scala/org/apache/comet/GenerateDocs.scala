@@ -129,6 +129,16 @@ object GenerateDocs {
             serde.getCompatibleNotes(),
             serde.getIncompatibleReasons(),
             serde.getUnsupportedReasons())
+        })),
+    "url" -> ((
+      "compatibility/expressions/url.md",
+      () =>
+        QueryPlanSerde.urlExpressions.toSeq.map { case (cls, serde) =>
+          (
+            cls.getSimpleName,
+            serde.getCompatibleNotes(),
+            serde.getIncompatibleReasons(),
+            serde.getUnsupportedReasons())
         })))
 
   def main(args: Array[String]): Unit = {
@@ -237,7 +247,7 @@ object GenerateDocs {
       compat.nonEmpty || incompat.nonEmpty || unsupported.nonEmpty
     }
     for ((name, compat, incompat, unsupported) <- sorted) {
-      w.write(s"\n### $name\n".getBytes)
+      w.write(s"\n## $name\n".getBytes)
       if (compat.nonEmpty) {
         w.write(
           ("\nThe following differences from Spark are always present and do not require" +
